@@ -1,0 +1,188 @@
+#!/usr/bin/python
+
+import os
+import sys
+import pyxnat
+import zipfile
+import argparse
+import tempfile
+import subprocess as sub
+from multiprocessing.pool import ThreadPool
+
+scantypes = ['MPRAGE','SPGR']
+
+##################################
+# Arguments
+##################################
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Process fs-recons en mass')
+
+    # input
+    parser.add_argument('--project','-p',
+                        metavar='id',
+                        help='Project ID (within XNAT)',
+                        required=True)
+
+    parser.add_argument('--outdir', '-o',
+                        metavar='dir',
+                        help='Output dir',
+                        required=True)
+
+    parser.add_argument('--nthreads','-n',
+                        metavar='n', type=int,
+                        help='Number of threads to run simultaneously',
+                        required=True)
+
+    parser.add_argument('sessfile',
+                        metavar='sessfile',
+                        type=argparse.FileType('r'),
+                        help='Input session list file')
+
+    args = parser.parse_args()
+
+    return args
+
+##################################
+# XNAT
+##################################
+
+def get_xnat():
+    return pyxnat.Interface()
+
+def get_project(id):
+    return get_xnat().select.project(id)
+
+def get_scans(project,subjid):
+    subject = project.subject(subjid)
+    if not subject.exists():
+        print "{}: ERROR, subject not found in project".format(subjid)
+        sys.exit()
+
+    # get all MR sessions for subject
+    mr_sess_labels = [x.label()
+                  for x in subject.experiments().get('type')
+                  if  x.datatype()=='xnat:mrSessionData']
+
+    if len(mr_sess_labels)==0:
+        print "{}: ERROR, no MR sessions found for subject. ".format(subjid)
+        sys.exit()
+
+    # take first one
+    mr_sess_label = mr_sess_labels[0]
+
+    return subject.experiment(mr_sess_label).scans()
+
+##################################
+# Helpers
+##################################
+
+def get_dicom(dir):
+    for root, dirs, files in os.walk(dir):
+        for file in sorted(files):
+            if file.endswith('.dcm'):
+                return os.path.join(root,file)
+
+def download_zip(project, sessid):
+    dldir = tempfile.mkdtemp()
+    found = False
+    for scantype in scantypes:
+        print "{}: looking for {} scans... ".format(sessid, scantype)
+        dlfile = "{}_{}_{}".format(project, sessid, scantype)
+        dlpath = os.path.join(dldir, dlfile)
+        proj = get_project(project)
+
+        if not proj.exists():
+            print "{}: ERROR, project {} not found".format(sessid, project)
+            sys.exit()
+
+        scans = get_scans(proj, sessid)
+        try:
+            # download zip file
+            scans.download(dldir,type=scantype, name=dlfile)
+            print "{}: downloaded file {}".format(sessid, dlpath)
+            return dlpath+'.zip'
+            found=True
+
+        except:
+            # the above command creates a broken file, let's remove
+            dlpathname = dlpath+'.zip'
+            if os.path.exists(dlpathname):
+                os.remove(dlpathname)
+            print "{}: no {} scans found".format(sessid, scantype)
+
+    if not found:
+        print "{}: no scans found.".format(sessid)
+        sys.exit()
+
+
+
+
+##################################
+# Thread process
+##################################
+
+
+def fsrecon(project, sessid, outdir='.'):
+    # download data
+    dlfile = download_zip(project, sessid)
+
+    # unzip
+    print "{}: unzipping file...".format(sessid)
+    tdir = tempfile.mkdtemp()
+    zf = zipfile.ZipFile(dlfile)
+    zf.extractall(tdir)
+
+    # find dicom
+    dicom = get_dicom(tdir)
+
+    # recon-all
+    print "{}: running recon-all...".format(sessid)
+    reconall = 'recon-all -qcache -all -hippo-subfields -s {} -sd {} -i {}'
+    #recondir = '/space/bic/subjects/fs-recons'
+    cmdstr = reconall.format(sessid, outdir, dicom)
+    print "{}: {}".format(sessid, cmdstr)
+
+    logfilename = os.path.join(outdir,'{}.fsrecon.log'.format(sessid))
+    logfile = open(logfilename, 'a')
+    proc = sub.Popen(cmdstr,
+                     shell = True,
+                     executable='/bin/bash',
+                     stdout = logfile,
+                     stderr = logfile)
+
+    # block processing until finished
+    stdout,_ = proc.communicate()
+
+    # push output to log
+    #logfile.write(stdout)
+    #logfile.close()
+
+    # check for errors
+    if proc.poll():
+        print '{}: recon-all encountered errors'.format(sessid)
+    else:
+        print '{}: recon-all finished successfully!'.format(sessid)
+
+
+
+##################################
+# Main
+##################################
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    sessions = [l.strip() for l in args.sessfile.readlines()
+                           if l.strip() != '']
+
+    task_pool = ThreadPool(processes=args.nthreads)
+
+    for sessid in sessions:
+        #fsrecon(args.project,sessid,args.outdir)
+        task_pool.apply_async(fsrecon, (args.project,sessid,args.outdir))
+
+
+    task_pool.close()
+    task_pool.join()
+

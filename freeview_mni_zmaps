@@ -1,0 +1,6 @@
+#!/bin/bash
+
+ext=${1##*.}
+
+freeview $FSL_DIR/data/standard/MNI152_T1_1mm.nii.gz $(echo $* | xargs | sed 's/'${ext}'/'${ext}'\:colormap\=heat\:heatscale\=0\.15,0\.15,0\.5/g') &
+

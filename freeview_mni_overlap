@@ -1,0 +1,15 @@
+#!/bin/bash
+
+ext=${1##*.}
+
+lut=$(mktemp)
+
+echo """# name  R   G   B   A
+0 none        0    0   0   100
+1 first      30  144 255     0
+2 second    220   20  20     0
+3 both      160   32 240     0
+""" > $lut
+
+freeview $FSL_DIR/data/standard/MNI152_T1_1mm.nii.gz $(ls -1 $* | xargs -n 1 -I {} echo {}:colormap=lut:lut=$lut | xargs ) &
+

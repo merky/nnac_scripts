@@ -1,0 +1,202 @@
+#!/usr/bin/python
+
+import os
+import sys
+import argparse
+import numpy as np
+import subprocess as sub
+import matplotlib.pyplot as plt
+from scipy.cluster.vq import vq, kmeans, whiten
+from scipy.cluster.hierarchy import linkage, dendrogram
+
+
+#########################################
+# Arguments
+#########################################
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Compute ETA2 similarity between volumes.')
+
+    # input
+    parser.add_argument('--volumes', '-v', metavar='file',
+                           type=argparse.FileType('r'), help='Input volume(s)', nargs='*',
+                           required=True)
+    parser.add_argument('--names', '-n', metavar='name', 
+                           help='volume name(s); match order of -v', nargs='*',
+                           required=False)
+
+    # outputs
+    parser.add_argument('--csv', metavar='filename', type=argparse.FileType('w'),
+                           help='output csv file of matrix; otherwise stdout', required=False)
+    parser.add_argument('--dendrogram', metavar='dendrogram_image.png', type=argparse.FileType('w'),
+                           help='output dendrogram image of hierarchical clustering', required=False)
+    parser.add_argument('--heatmap', metavar='matrix_image.png', type=argparse.FileType('w'),
+                           help='output matrix heatmap of eta2 values', required=False)
+    parser.add_argument('--kmeans', metavar='n', type=int, nargs='+',
+                           help='kmeans clustering', required=False)
+
+    # options
+    parser.add_argument('--thresh', metavar='val', type=float,
+                           help='color threshold for dendrogram', required=False)
+
+    args = parser.parse_args()
+
+    if len(args.names) > 0 and len(args.names) != len(args.volumes):
+        print("Error: when implementing names, the number of names must match the number of input volumes")
+        sys.exit()
+
+    return args
+
+#########################################
+# Heatmap
+#########################################
+
+# creates square heatmap (row/col labels are same)
+# * current setup highlights positive-only relationships
+def heatmap(matrix, labels=None, limits=[0,1], cm=plt.cm.YlGn_r):
+    # limits
+    mn,mx = limits
+
+    # Plot it out
+    fig, ax = plt.subplots()
+    heatmap = ax.pcolor(matrix, cmap=cm, alpha=0.95, vmin=mn, vmax=mx)
+
+    # Format
+    fig = plt.gcf()
+    fig.set_size_inches(12, 10)
+
+    # turn off the frame
+    ax.set_frame_on(False)
+
+    # put the major ticks at the middle of each cell
+    ax.set_yticks(np.arange(matrix.shape[0]) + 0.5, minor=False)
+    ax.set_xticks(np.arange(matrix.shape[1]) + 0.5, minor=False)
+
+    # want a more natural, table-like display
+    ax.invert_yaxis()
+    ax.xaxis.tick_top()
+
+    # Set the labels
+    if labels is None: labels = matrix.index
+
+    # note I could have used nba_sort.columns but made "labels" instead
+    ax.set_xticklabels(labels, minor=False)
+    ax.set_yticklabels(labels, minor=False)
+
+    # rotate the
+    plt.xticks(rotation=90)
+
+    ax.grid(False)
+
+    # Turn off all the ticks
+    ax = plt.gca()
+
+    # insert color bar
+    plt.colorbar(heatmap)
+
+    for t in ax.xaxis.get_major_ticks():
+        t.tick1On = False
+        t.tick2On = False
+    for t in ax.yaxis.get_major_ticks():
+        t.tick1On = False
+        t.tick2On = False
+
+    return fig
+
+
+#########################################
+# Similarity & Clustering
+#########################################
+
+# returns symmetric matrix representing the
+# eta2 values between each variable-pairs.
+def eta2(volumes,func=float):
+    cmdstr = '3ddot -full -doeta2 {}'.format(' '.join(volumes))
+    p = sub.Popen(cmdstr, shell=True, stdout=sub.PIPE)
+    out, err = p.communicate()
+    values = [[func(y) for y in x.split()]
+                        for x in out.split('\n')
+                        if  len(x) > 1]
+    return values
+
+
+def cluster_hierarchical(matrix,labels=None,thresh=None):
+    l = linkage(matrix)
+    return dendrogram(l,
+             labels=labels,
+             orientation='left',
+             color_threshold=thresh)
+
+
+#########################################
+# Main Application
+#########################################
+
+# dendrogram with specific clustering colors
+def kdendrogram(matrix, labels, thresh, outfile, colors=None):
+    fig = cluster_hierarchical(matrix, labels=labels, thresh=thresh)
+
+    # colorize labels
+    if colors is not None:
+        ax = plt.gca()
+        xlbls = ax.get_ymajorticklabels()
+        for lbl in xlbls:
+            lbltxt = lbl.get_text()
+            if lbltxt == '': continue
+            lbl.set_color(colors[lbltxt])
+
+    # configure and save figure
+    plt.gcf().set_size_inches(12,16)
+    plt.subplots_adjust(left=.35)
+    plt.savefig(outfile, dpi=200)
+    plt.close()
+
+
+colors = ['b','g','r','c','m','y','k','w']
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    matrix = eta2([x.name for x in args.volumes], func=float)
+
+    names  = ','.join(args.names)
+    valuestr = '\n'.join([','.join([str(y) for y in x]) for x in matrix])
+
+    # output csv format
+    if args.csv is not None:
+        args.csv.write(names + '\n')
+        args.csv.write(valuestr)
+    else:
+        pass
+        #print names
+        #print valuestr
+
+    # k-means clustering
+    kcolors=[]
+    if args.kmeans:
+        w = whiten(matrix)
+        for n in args.kmeans:
+            k,_ = kmeans(w,n,iter=300)
+            clusters,_ = vq(w,k)
+            cluster_colors = {args.names[n]:colors[i] for n,i in enumerate(clusters)}
+            kcolors.append(cluster_colors)
+
+    # dendrogram
+    if args.dendrogram:
+        if args.kmeans:
+            # color the dendrogram according to k-means
+            for i,k in enumerate(args.kmeans):
+                base,ext = os.path.splitext(args.dendrogram.name)
+                outfile = ''.join([base,'_k',str(k),ext])
+                kdendrogram(matrix, args.names, 1, outfile, kcolors[i])
+        else:
+            # default dendrogram output
+            kdendrogram(matrix, args.names, args.thresh, args.dendrogram)
+
+    # heatmap
+    if args.heatmap:
+        fig = heatmap(np.matrix(matrix), labels=args.names)
+        plt.tight_layout()
+        plt.savefig(args.heatmap)
+
+
