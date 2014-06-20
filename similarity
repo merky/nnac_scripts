@@ -2,6 +2,7 @@
 
 import os
 import sys
+import uuid
 import argparse
 import numpy as np
 import subprocess as sub
@@ -38,6 +39,14 @@ def parse_args():
     # options
     parser.add_argument('--thresh', metavar='val', type=float,
                            help='color threshold for dendrogram', required=False)
+    parser.add_argument('--mask', metavar='file',
+                           type=argparse.FileType('r'),
+                           help='Mask volume (highly suggested!)', required=False)
+
+    # metric
+    parser.add_argument('--metric', '-m', metavar='eta2/pearson',
+                           choices=['eta2','pearson'], default='eta2',
+                           help='Metric of similarity (only use pearson on 4d files)', required=False)
 
     args = parser.parse_args()
 
@@ -110,14 +119,55 @@ def heatmap(matrix, labels=None, limits=[0,1], cm=plt.cm.YlGn_r):
 
 # returns symmetric matrix representing the
 # eta2 values between each variable-pairs.
-def eta2(volumes,func=float):
-    cmdstr = '3ddot -full -doeta2 {}'.format(' '.join(volumes))
+def eta2(volumes,func=float,mask=None):
+    maskstr = '-mask {}'.format(mask.name) if mask is not None else ''
+    cmdstr  = '3ddot -full {} -doeta2 {}'.format(maskstr, ' '.join(volumes))
+
     p = sub.Popen(cmdstr, shell=True, stdout=sub.PIPE)
     out, err = p.communicate()
     values = [[func(y) for y in x.split()]
                         for x in out.split('\n')
                         if  len(x) > 1]
     return values
+
+def tmpvol():
+    """ returns prefix path for temp volume file """
+    return os.path.join('/tmp',str(uuid.uuid4()))
+
+def pearson(volumes, func=float, mask=None):
+    corr={}
+    for v in volumes:
+        for u in volumes:
+            if v not in corr:
+                corr[v] = {}
+            if u not in corr:
+                corr[u] = {}
+            if v == u:
+                corr[v][u] = 1
+                continue
+            if v in corr and u in corr[v]: continue
+
+            print "correlating {} with {}".format(v,u)
+
+            vucorr=tmpvol()
+            # compute corr
+            cmdstr='3dTcorrelate -automask -prefix {} {} {}'.format(vucorr, v, u)
+            p = sub.Popen(cmdstr, shell=True, stdout=sub.PIPE)
+            out,err = p.communicate()
+
+            # compute mean corr
+            cmdstr='3dmaskave -mask {} {}'.format(mask.name, vucorr+'+tlrc.BRIK')
+            p = sub.Popen(cmdstr, shell=True, stdout=sub.PIPE)
+            out,err = p.communicate()
+            vucorrval = func(out.split()[0])
+
+            # store correlation
+            corr[v][u] = vucorrval
+            corr[u][v] = vucorrval
+
+    # return matrix
+    return [[corr[v][u] for v in volumes] 
+                        for u in volumes]
 
 
 def cluster_hierarchical(matrix,labels=None,thresh=None):
@@ -128,10 +178,7 @@ def cluster_hierarchical(matrix,labels=None,thresh=None):
              color_threshold=thresh)
 
 
-#########################################
-# Main Application
-#########################################
-
+colors = ['b','g','r','c','m','y','k','w']
 # dendrogram with specific clustering colors
 def kdendrogram(matrix, labels, thresh, outfile, colors=None):
     fig = cluster_hierarchical(matrix, labels=labels, thresh=thresh)
@@ -152,12 +199,18 @@ def kdendrogram(matrix, labels, thresh, outfile, colors=None):
     plt.close()
 
 
-colors = ['b','g','r','c','m','y','k','w']
+
+#########################################
+# Main Application
+#########################################
 
 if __name__ == '__main__':
     args = parse_args()
 
-    matrix = eta2([x.name for x in args.volumes], func=float)
+    if args.metric == 'eta2':
+        matrix = eta2([x.name for x in args.volumes], func=float, mask=args.mask)
+    elif args.metric == 'pearson':
+        matrix = pearson([x.name for x in args.volumes], func=float, mask=args.mask)
 
     names  = ','.join(args.names)
     valuestr = '\n'.join([','.join([str(y) for y in x]) for x in matrix])
@@ -166,6 +219,7 @@ if __name__ == '__main__':
     if args.csv is not None:
         args.csv.write(names + '\n')
         args.csv.write(valuestr)
+        print "CSV file saved to {}".format(args.csv)
     else:
         pass
         #print names
@@ -189,14 +243,17 @@ if __name__ == '__main__':
                 base,ext = os.path.splitext(args.dendrogram.name)
                 outfile = ''.join([base,'_k',str(k),ext])
                 kdendrogram(matrix, args.names, 1, outfile, kcolors[i])
+                print "k-means colored dendrogram saved to {}".format(outfile)
         else:
             # default dendrogram output
             kdendrogram(matrix, args.names, args.thresh, args.dendrogram)
+            print "dendrogram saved to {}".format(args.dendrogram)
 
     # heatmap
     if args.heatmap:
-        fig = heatmap(np.matrix(matrix), labels=args.names)
+        fig = heatmap(np.array(matrix), labels=args.names)
         plt.tight_layout()
         plt.savefig(args.heatmap)
+        print "heatmap saved to {}".format(args.heatmap)
 
 
