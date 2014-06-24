@@ -5,10 +5,9 @@ import sys
 import uuid
 import argparse
 import numpy as np
+import pandas as pd
 import subprocess as sub
 import matplotlib.pyplot as plt
-from scipy.cluster.vq import vq, kmeans, whiten
-from scipy.cluster.hierarchy import linkage, dendrogram
 
 
 #########################################
@@ -29,16 +28,10 @@ def parse_args():
     # outputs
     parser.add_argument('--csv', metavar='filename', type=argparse.FileType('w'),
                            help='output csv file of matrix; otherwise stdout', required=False)
-    parser.add_argument('--dendrogram', metavar='dendrogram_image.png', type=argparse.FileType('w'),
-                           help='output dendrogram image of hierarchical clustering', required=False)
     parser.add_argument('--heatmap', metavar='matrix_image.png', type=argparse.FileType('w'),
                            help='output matrix heatmap of eta2 values', required=False)
-    parser.add_argument('--kmeans', metavar='n', type=int, nargs='+',
-                           help='kmeans clustering', required=False)
 
     # options
-    parser.add_argument('--thresh', metavar='val', type=float,
-                           help='color threshold for dendrogram', required=False)
     parser.add_argument('--mask', metavar='file',
                            type=argparse.FileType('r'),
                            help='Mask volume (highly suggested!)', required=False)
@@ -125,14 +118,22 @@ def eta2(volumes,func=float,mask=None):
 
     p = sub.Popen(cmdstr, shell=True, stdout=sub.PIPE)
     out, err = p.communicate()
+
+    if err:
+        print "Error processing volumes:"
+        print err
+        sys.exit(1)
+
     values = [[func(y) for y in x.split()]
                         for x in out.split('\n')
                         if  len(x) > 1]
     return values
 
+
 def tmpvol():
     """ returns prefix path for temp volume file """
     return os.path.join('/tmp',str(uuid.uuid4()))
+
 
 def pearson(volumes, func=float, mask=None):
     corr={}
@@ -151,14 +152,21 @@ def pearson(volumes, func=float, mask=None):
 
             vucorr=tmpvol()
             # compute corr
-            cmdstr='3dTcorrelate -automask -prefix {} {} {}'.format(vucorr, v, u)
+            cmdstr='3dTcorrelate -prefix {} {} {}'.format(vucorr, v, u)
             p = sub.Popen(cmdstr, shell=True, stdout=sub.PIPE)
             out,err = p.communicate()
 
             # compute mean corr
-            cmdstr='3dmaskave -mask {} {}'.format(mask.name, vucorr+'+tlrc.BRIK')
+            maskstr = ' -mask {}'.format(mask.name) if mask is not None else ''
+            cmdstr='3dmaskave {} {}'.format(maskstr, vucorr+'+????.BRIK')
             p = sub.Popen(cmdstr, shell=True, stdout=sub.PIPE)
             out,err = p.communicate()
+
+            if err:
+                print "Error processing volumes:"
+                print err
+                sys.exit(1)
+
             vucorrval = func(out.split()[0])
 
             # store correlation
@@ -168,36 +176,6 @@ def pearson(volumes, func=float, mask=None):
     # return matrix
     return [[corr[v][u] for v in volumes] 
                         for u in volumes]
-
-
-def cluster_hierarchical(matrix,labels=None,thresh=None):
-    l = linkage(matrix)
-    return dendrogram(l,
-             labels=labels,
-             orientation='left',
-             color_threshold=thresh)
-
-
-colors = ['b','g','r','c','m','y','k','w']
-# dendrogram with specific clustering colors
-def kdendrogram(matrix, labels, thresh, outfile, colors=None):
-    fig = cluster_hierarchical(matrix, labels=labels, thresh=thresh)
-
-    # colorize labels
-    if colors is not None:
-        ax = plt.gca()
-        xlbls = ax.get_ymajorticklabels()
-        for lbl in xlbls:
-            lbltxt = lbl.get_text()
-            if lbltxt == '': continue
-            lbl.set_color(colors[lbltxt])
-
-    # configure and save figure
-    plt.gcf().set_size_inches(12,16)
-    plt.subplots_adjust(left=.35)
-    plt.savefig(outfile, dpi=200)
-    plt.close()
-
 
 
 #########################################
@@ -212,42 +190,18 @@ if __name__ == '__main__':
     elif args.metric == 'pearson':
         matrix = pearson([x.name for x in args.volumes], func=float, mask=args.mask)
 
-    names  = ','.join(args.names)
-    valuestr = '\n'.join([','.join([str(y) for y in x]) for x in matrix])
+    df = pd.DataFrame.from_dict({n:vals for n,vals in zip(args.names,matrix)})
+    df.index = args.names
 
     # output csv format
-    if args.csv is not None:
-        args.csv.write(names + '\n')
-        args.csv.write(valuestr)
-        print "CSV file saved to {}".format(args.csv)
+    if args.csv:
+        df.to_csv(args.csv)
+        print "CSV file saved to {}".format(args.csv.name)
     else:
-        pass
-        #print names
-        #print valuestr
-
-    # k-means clustering
-    kcolors=[]
-    if args.kmeans:
-        w = whiten(matrix)
-        for n in args.kmeans:
-            k,_ = kmeans(w,n,iter=300)
-            clusters,_ = vq(w,k)
-            cluster_colors = {args.names[n]:colors[i] for n,i in enumerate(clusters)}
-            kcolors.append(cluster_colors)
-
-    # dendrogram
-    if args.dendrogram:
-        if args.kmeans:
-            # color the dendrogram according to k-means
-            for i,k in enumerate(args.kmeans):
-                base,ext = os.path.splitext(args.dendrogram.name)
-                outfile = ''.join([base,'_k',str(k),ext])
-                kdendrogram(matrix, args.names, 1, outfile, kcolors[i])
-                print "k-means colored dendrogram saved to {}".format(outfile)
-        else:
-            # default dendrogram output
-            kdendrogram(matrix, args.names, args.thresh, args.dendrogram)
-            print "dendrogram saved to {}".format(args.dendrogram)
+        print " showing {} values: ".format(args.metric)
+        print "-" * 30
+        print df
+        print "-" * 30
 
     # heatmap
     if args.heatmap:

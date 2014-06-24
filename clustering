@@ -1,0 +1,124 @@
+#!/usr/bin/python
+
+import csv
+import sys
+import argparse
+import matplotlib.pyplot as plt
+from scipy.cluster.vq import vq, kmeans, whiten
+from scipy.cluster.hierarchy import linkage, dendrogram
+
+#########################################
+# Arguments
+#########################################
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Compute clustering of matrix')
+
+    # input
+    parser.add_argument('--input', '-i', metavar='file',
+                           type=argparse.FileType('r'), help='Input matrix (csv format)',
+                           required=True)
+
+    # outputs
+    parser.add_argument('--hierarchical', metavar='dendrogram.png', type=argparse.FileType('w'),
+                           help='hierarchical clustering', required=False)
+    parser.add_argument('--kmeans', metavar='n', type=int, nargs='+',
+                           help='compute kmeans clustering and output group assignments (will color dendrogram as well)',
+                           required=False)
+
+    # options
+    parser.add_argument('--thresh', metavar='val', type=float, default='0.25',
+                           help='color threshold for dendrogram; default: 0.25', required=False)
+
+    args = parser.parse_args()
+
+    if args.hierarchical is None and args.kmeans is None:
+        print "Nothing to do! Choose an action (see --help)"
+        sys.exit()
+
+    return args
+
+#########################################
+# Similarity & Clustering
+#########################################
+
+def cluster_hierarchical(matrix,labels=None,thresh=None):
+    l = linkage(matrix)
+    return dendrogram(l,
+             labels=labels,
+             orientation='left',
+             color_threshold=thresh)
+
+
+colors = ['b','g','r','c','m','y','k','w']
+# dendrogram with specific clustering colors
+def kdendrogram(matrix, labels, thresh, outfile, colors=None):
+    fig = cluster_hierarchical(matrix, labels=labels, thresh=thresh)
+
+    # colorize labels
+    if colors is not None:
+        ax = plt.gca()
+        xlbls = ax.get_ymajorticklabels()
+        for lbl in xlbls:
+            lbltxt = lbl.get_text()
+            if lbltxt == '': continue
+            lbl.set_color(colors[lbltxt])
+
+    # configure and save figure
+    plt.gcf().set_size_inches(12,16)
+    plt.subplots_adjust(left=.35)
+    plt.savefig(outfile, dpi=200)
+    plt.close()
+
+
+#########################################
+# Main Application
+#########################################
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    # parse input file
+    infile = csv.DictReader(args.input,delimiter=',')
+    fields = infile.fieldnames[1:]
+    values = [x for x in infile]
+    matrix = [[float(v) for k,v in row.iteritems() if k != ''] for row in values]
+
+    # hack-a-doodle-doo. we need a better input parser
+    if  len(matrix) != len(fields):
+        print "Error: matrix does not seem to be symmetrical"
+        sys.exit()
+
+    # k-means clustering
+    kcolors=[]
+    if args.kmeans:
+        w = whiten(matrix)
+        for n in args.kmeans:
+            k,_ = kmeans(w,n,iter=300)
+            clusters,_ = vq(w,k)
+            cluster_colors = {fields[n]:colors[i] for n,i in enumerate(clusters)}
+            kcolors.append(cluster_colors)
+
+    # dendrogram
+    if args.hierarchical:
+        if args.kmeans:
+            # color the dendrogram according to k-means
+            for i,k in enumerate(args.kmeans):
+                base,ext = os.path.splitext(args.dendrogram.name)
+                outfile = ''.join([base,'_k',str(k),ext])
+                kdendrogram(matrix, args.names, 1, outfile, kcolors[i])
+                print "k-means colored dendrogram saved to {}".format(outfile)
+        else:
+            # default dendrogram output
+            kdendrogram(matrix, args.names, args.thresh, args.dendrogram)
+            print "dendrogram saved to {}".format(args.dendrogram)
+    else:
+        if args.kmeans:
+            for i,k in enumerate(args.kmeans):
+                print '-' * 30
+                print ' kmeans, k={}'.format(k)
+                print '-' * 30
+                for field in fields:
+                    print "field: {}\t\t\tgroup: {}".format(field, kcolors[i][field])
+
+
