@@ -19,11 +19,11 @@ def parse_args():
 
     # input
     parser.add_argument('--volumes', '-v', metavar='file',
-                           type=argparse.FileType('r'), help='Input volume(s)', nargs='*',
+                           type=argparse.FileType('r'), help='Input volume(s)', nargs='+',
                            required=True)
     parser.add_argument('--names', '-n', metavar='name', 
-                           help='volume name(s); match order of -v', nargs='*',
-                           required=False)
+                           help='volume name(s); match order of -v', nargs='+',
+                           required=True)
 
     # outputs
     parser.add_argument('--csv', metavar='filename', type=argparse.FileType('w'),
@@ -45,6 +45,10 @@ def parse_args():
 
     if len(args.names) > 0 and len(args.names) != len(args.volumes):
         print("Error: when implementing names, the number of names must match the number of input volumes")
+        sys.exit()
+
+    if len(args.volumes) < 2:
+        print("Error: you need at least 2 volumes to make a comparision, silly.")
         sys.exit()
 
     return args
