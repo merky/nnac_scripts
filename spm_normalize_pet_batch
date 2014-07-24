@@ -28,6 +28,7 @@ if [ $# -lt 3 ]; then
 fi
 
 NUM_JOBS=1
+curdir=$(readlink -f $(dirname $0))
 
 # check for special arg(s)
 while getopts "n: h " o ; do
@@ -37,7 +38,6 @@ while getopts "n: h " o ; do
 	     exit 0;;
     esac
 done
-
 
 # positional arguments
 SUBJECTS_FILE=${@:$OPTIND:1}
@@ -89,7 +89,7 @@ run(){
     # /space/nnac/pubs/matlab/
     subject_file=$(readlink -f $1)
 
-    CMD="spm_normalize_pet_batch('$subject_file','$SOURCE_FILE','$REF_FILE'); exit;"
+    CMD="addpath $curdir/matlab; spm_normalize_pet_batch('$subject_file','$SOURCE_FILE','$REF_FILE'); exit;"
     echo "RUNNING MATLAB COMMAND:"
     echo $CMD
     echo "============================================="
