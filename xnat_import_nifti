@@ -1,0 +1,53 @@
+#!/bin/bash
+
+PROJECT=$1
+SUBJECT=$2
+SESSION=$3
+SCAN_TYPE=$4
+NIFTI=$5
+SESSION_DATE=$6
+
+if [[ "$SCAN_TYPE" == "T1" ]]; then
+    SCAN_NUM="001"
+else
+    SCAN_NUM="002"
+fi
+
+output='&> /dev/null'
+
+# check if enough args
+if [[ $# -lt 5 ]]; then
+    echo "Usage: $(basename $0) project subject session scan-type nifti-file [mm/dd/yy]"
+    echo ""
+    echo "This tool should be used when: "
+    echo "  * dicom files do NOT exist "
+    echo "  * nifti files ARE available"
+    echo "  * project already exists within XNAT"
+    exit 0;
+fi
+
+
+if [[ $SESSION_DATE == "" ]]; then
+    SESSION_DATE=$(date +"%m/%d/%y")
+fi
+
+# project URI
+uri_project="/data/archive/projects/${PROJECT}"
+uri_subject="$uri_project/subjects/${SUBJECT}"
+uri_session="$uri_subject/experiments/${SESSION}"
+uri_scan="$uri_session/scans/$SCAN_NUM"
+
+# create subject (if does not already exist)
+XNATRestClient -tsPass -m PUT -remote "$uri_subject" $output
+
+# create session (if does not already exist)
+XNATRestClient -tsPass -m PUT -remote "${uri_session}?xnat:mrSessionData/date=${SESSION_DATE}" $output
+
+# create scan
+XNATRestClient -tsPass -m PUT -remote "${uri_scan}?xsiType=xnat:mrScanData&xnat:imageScanData/type=$SCAN_TYPE" $output
+
+# upload file
+XNATRestClient -tsPass -m PUT \
+               -local  $NIFTI \
+               -remote "${uri_scan}/resources/NIFTI/files/$SCAN_NUM.nii.gz?format=NIFTI&content=NIFTI_RAW" $output
+

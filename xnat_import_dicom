@@ -1,0 +1,116 @@
+#!/bin/bash
+#
+# Script that moves DICOM/PDF/CSV data from the harddrive into XNat
+# (Hauke Bartsch, hbartsch@ucsd.edu)
+# requires: dcmtk, curl
+# add your user name, password and server name
+#
+
+if [ $# -ne 4 ]
+then
+  echo "Usage: provide <project id>, <subject id>, <visit id> and <data directory>"
+  echo "       Data in the directory is scanned for DICOM data, all other files are uploaded as binary."
+  exit;
+fi
+echo "done"
+
+subject=$2
+session=$3
+directory=$4
+USER=admin
+PASSWORD=admin
+PROJECT=$1
+XNAT=https://10.110.48.191/xnat
+
+dir=`pwd`
+if [ ! -d $directory ]; then
+  echo "Error: subject directory ($directory) does not exist"
+  exit;
+fi
+
+# Create a session cookie, we want to re-use that session instead of providing
+# login information every time. Number of sessions might be limited otherwise to 1000.
+cookie=`curl -k -u $USER:$PASSWORD -X POST $XNAT/data/JSESSION`
+echo "Session ID is: $cookie"
+
+# create subject in case it does not exist
+echo "create subject $c"
+c=`curl --cookie JSESSIONID=$cookie -k -X PUT $XNAT/data/archive/projects/$PROJECT/subjects/$subject`
+# create session in case it does not exist
+echo "create session $c"
+c=`curl --cookie JSESSIONID=$cookie -k -X PUT $XNAT/data/archive/projects/$PROJECT/subjects/$subject/experiments/$session?xsiType=xnat:mrSessionData`
+
+timestamps=( )
+for u in `find $directory -type f -print`
+do 
+  # check if the file is a DICOM
+  /usr/local/bin/dcmftest $u > /dev/null; if test $? -eq 0; 
+  then 
+     # move file over using REST API
+     c=`curl  --cookie JSESSIONID=$cookie -s -k -H 'Content-Type: application/dicom' -X POST "$XNAT/data/services/import?inbody=true&PROJECT_ID=$PROJECT&SUBJECT_ID=$subject&EXPT_LABEL=$session&prearchive=true&overwrite=append&format=DICOM&content=T1_RAW" --data-binary @$u | tr -d [:cntrl:]`
+     echo -n "."
+     timestamp=`echo $c | cut -d'/' -f6`
+     # is timestamp new?
+     found="0"
+     for f in "${timestamps[@]}"; do
+        if [ "$f" = "$timestamp" ]; then
+           found="1"
+        fi
+     done
+     # add to array
+     if [ $found = "0" ]; then
+        timestamps+=($timestamp)
+        echo "found a new series $timestamp"
+     fi
+  else 
+     echo "found non-DICOM file"; 
+     # what is the file extension?
+     ext=${u##*.}
+     case $ext in
+     "pdf")
+       echo file $u is a pdf;
+       args="-k -X PUT  --cookie JSESSIONID=$cookie"
+       url="$XNAT/data/archive/projects/$PROJECT/subjects/$subject/experiments/$session/files/$u?inbody=true&format=PDF"
+       curl $args "$url" --data-binary @$u
+       ;;
+     "csv")
+       echo file $u is a csv;
+       args="-k -X PUT  --cookie JSESSIONID=$cookie"
+       url="$XNAT/data/archive/projects/$PROJECT/subjects/$subject/experiments/$session/files/$u?inbody=true&format=CSV"
+       curl $args "$url" --data-binary @$u
+       ;;
+     *)
+       echo unknown file type $ext for file $u
+       ;;
+     esac
+  fi;
+done
+echo "done sending files... (c=$c)"
+
+# DICOM files have to be moved from the pre-archive to the archive to be visible
+# for this we do build and commit for each session.
+# Limitation: If you have more than one session the above part will upload using a
+# single session id provided on the command line. The part below will fail 
+# because each session needs to be unique. Provide a single session as input
+# only!
+for ids in "${timestamps[@]}"; do
+
+  #timestamp=`echo $c | cut -d'/' -f6`
+  timesteamp=$ids
+  echo "timestamp is: $timestamp"
+
+  args=" --cookie JSESSIONID=$cookie -k -X POST"
+  url=$XNAT${c}?action=build
+  echo "CALLING URL: $url ($args)"
+  /usr/bin/curl $args $url
+
+  echo "CALLING: commit action"
+  url=$XNAT${c}?action=commit
+  /usr/bin/curl $args $url
+
+  url="$XNAT/data/services/archive?overwrite=delete&src=${c}&dest=/archive/projects/$PROJECT/subjects/$subject"
+  echo "Move to archive..."
+  /usr/bin/curl $args $url
+done
+
+echo "$subject $session done"
