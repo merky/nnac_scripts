@@ -1,0 +1,18 @@
+#!/bin/bash
+
+usage(){
+    echo "Usage: "
+    echo " compute_snr <input.nii> <output-snr.nii>"
+    exit 0
+}
+
+if [[ $# -lt 2 ]]; then
+    usage
+fi
+
+tmean=$(mktemp --suffix .nii.gz)
+tstd=$(mktemp --suffix .nii.gz)
+
+fslmaths $1 -Tmean $tmean
+fslmaths $1 -Tstd $tstd
+fslmaths $tmean -div $tstd $2

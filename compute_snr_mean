@@ -1,0 +1,15 @@
+#!/bin/bash
+
+usage(){
+    echo "Usage: "
+    echo " compute_snr_mean <input.nii> <mask.nii> "
+    exit 0
+}
+
+if [[ $# -lt 2 ]]; then
+    usage
+fi
+
+timg=$(mktemp --suffix .nii.gz)
+compute_snr_map $1 $timg
+fslstats $timg -k $2 -M
