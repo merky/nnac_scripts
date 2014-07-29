@@ -14,8 +14,8 @@ matlabbatch{1}.spm.spatial.normalise.estwrite.eoptions.cutoff = 25;
 matlabbatch{1}.spm.spatial.normalise.estwrite.eoptions.nits = 16;
 matlabbatch{1}.spm.spatial.normalise.estwrite.eoptions.reg = 1;
 matlabbatch{1}.spm.spatial.normalise.estwrite.roptions.preserve = 0;
-matlabbatch{1}.spm.spatial.normalise.estwrite.roptions.bb = [-78 -112 -50
-                                                             78 76 85];
+matlabbatch{6}.spm.spatial.normalise.estwrite.roptions.bb = [-90 -126 -72
+                                                              91 91 109];
 matlabbatch{1}.spm.spatial.normalise.estwrite.roptions.vox = [2 2 2];
 matlabbatch{1}.spm.spatial.normalise.estwrite.roptions.interp = 1;
 matlabbatch{1}.spm.spatial.normalise.estwrite.roptions.wrap = [0 0 0];
