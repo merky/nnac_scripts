@@ -20,7 +20,7 @@ directory=$4
 USER=admin
 PASSWORD=admin
 PROJECT=$1
-XNAT=https://10.110.48.191/xnat
+XNAT=http://10.110.48.191:8080/xnat
 
 dir=`pwd`
 if [ ! -d $directory ]; then
@@ -30,24 +30,24 @@ fi
 
 # Create a session cookie, we want to re-use that session instead of providing
 # login information every time. Number of sessions might be limited otherwise to 1000.
-cookie=`curl -k -u $USER:$PASSWORD -X POST $XNAT/data/JSESSION`
+cookie=`curl -u $USER:$PASSWORD -X POST $XNAT/data/JSESSION`
 echo "Session ID is: $cookie"
 
 # create subject in case it does not exist
 echo "create subject $c"
-c=`curl --cookie JSESSIONID=$cookie -k -X PUT $XNAT/data/archive/projects/$PROJECT/subjects/$subject`
+c=`curl --cookie JSESSIONID=$cookie -X PUT $XNAT/data/archive/projects/$PROJECT/subjects/$subject`
 # create session in case it does not exist
-echo "create session $c"
-c=`curl --cookie JSESSIONID=$cookie -k -X PUT $XNAT/data/archive/projects/$PROJECT/subjects/$subject/experiments/$session?xsiType=xnat:mrSessionData`
+#echo "create session $c"
+#c=`curl --cookie JSESSIONID=$cookie -X PUT $XNAT/data/archive/projects/$PROJECT/subjects/$subject/experiments/$session?xsiType=xnat:mrSessionData`
 
 timestamps=( )
 for u in `find $directory -type f -print`
 do 
   # check if the file is a DICOM
-  /usr/local/bin/dcmftest $u > /dev/null; if test $? -eq 0; 
+  dcmftest $u > /dev/null; if test $? -eq 0; 
   then 
      # move file over using REST API
-     c=`curl  --cookie JSESSIONID=$cookie -s -k -H 'Content-Type: application/dicom' -X POST "$XNAT/data/services/import?inbody=true&PROJECT_ID=$PROJECT&SUBJECT_ID=$subject&EXPT_LABEL=$session&prearchive=true&overwrite=append&format=DICOM&content=T1_RAW" --data-binary @$u | tr -d [:cntrl:]`
+     c=`curl  --cookie JSESSIONID=$cookie -s -H 'Content-Type: application/dicom' -X POST "$XNAT/data/services/import?inbody=true&PROJECT_ID=$PROJECT&SUBJECT_ID=$subject&EXPT_LABEL=$session&prearchive=true&overwrite=append&format=DICOM&content=T1_RAW" --data-binary @$u | tr -d [:cntrl:]`
      echo -n "."
      timestamp=`echo $c | cut -d'/' -f6`
      # is timestamp new?
@@ -69,13 +69,13 @@ do
      case $ext in
      "pdf")
        echo file $u is a pdf;
-       args="-k -X PUT  --cookie JSESSIONID=$cookie"
+       args="-X PUT  --cookie JSESSIONID=$cookie"
        url="$XNAT/data/archive/projects/$PROJECT/subjects/$subject/experiments/$session/files/$u?inbody=true&format=PDF"
        curl $args "$url" --data-binary @$u
        ;;
      "csv")
        echo file $u is a csv;
-       args="-k -X PUT  --cookie JSESSIONID=$cookie"
+       args="-X PUT  --cookie JSESSIONID=$cookie"
        url="$XNAT/data/archive/projects/$PROJECT/subjects/$subject/experiments/$session/files/$u?inbody=true&format=CSV"
        curl $args "$url" --data-binary @$u
        ;;
@@ -99,18 +99,18 @@ for ids in "${timestamps[@]}"; do
   timesteamp=$ids
   echo "timestamp is: $timestamp"
 
-  args=" --cookie JSESSIONID=$cookie -k -X POST"
+  args=" --cookie JSESSIONID=$cookie -X POST"
   url=$XNAT${c}?action=build
   echo "CALLING URL: $url ($args)"
-  /usr/bin/curl $args $url
+  curl $args $url
 
   echo "CALLING: commit action"
   url=$XNAT${c}?action=commit
-  /usr/bin/curl $args $url
+  curl $args $url
 
   url="$XNAT/data/services/archive?overwrite=delete&src=${c}&dest=/archive/projects/$PROJECT/subjects/$subject"
   echo "Move to archive..."
-  /usr/bin/curl $args $url
+  curl $args $url
 done
 
 echo "$subject $session done"
