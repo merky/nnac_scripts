@@ -28,7 +28,7 @@ reset_matlab(){
     # create soft link if not there
     echo "matlab startup script not found or not updated... creating"
     [[ ! -d $HOME/matlab ]] && mkdir $HOME/matlab
-    rm $matlab_startup_local
+    rm -f $matlab_startup_local
     cp $matlab_startup_share $matlab_startup_local
 }
 
