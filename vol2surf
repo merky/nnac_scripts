@@ -1,0 +1,89 @@
+#!/bin/bash
+
+
+function usage
+{
+    echo "Batch convert volumes in MNI152 to freesurfer surfaces."
+    echo "Output surface filenames are based on input volumes"
+    echo ""
+    echo "Use: "
+    echo "   vol2surf <options> -v <volume(s)>"
+    echo "   vol2surf <options> -V <volume list file>"
+    echo ""
+    echo "OPTIONS:"
+    echo "   -m        Input volume(s) are in MNI305 space (default MNI152)"
+    echo "   -p <val>  Proj-frac min (- is white matter, 0 is white/gray boundary)"
+    echo "   -P <val>  Proj-frac max "
+    echo "   -M        Use Maximum value along normal (not avg)." 
+    echo "   -f <val>  Surface FWHM smoothing (default 4)"
+    echo "   -n        Nearest neighbor interpolation (default trilinear)"
+    echo "   -D        Output file directory is input file directory"
+    echo "   -c        Mask to cortex"
+    echo "   -h        Help menu"
+    echo ""
+    echo "Note: if specifying multiple items for an argument, use quotes."
+    echo "      ex. vol2surf -v \"file1.nii.gz file2.nii.gz\" "
+    
+}
+
+PROJFRAC=0.7
+FWHM=4
+NATIVEDIR=0
+CORTEX=""
+REG=" --reg $FREESURFER_HOME/average/mni152.register.dat "
+PROJFRACMIN="0"
+PROJFRACMAX="1"
+INTERP="trilin"
+NORMVAL="avg"
+
+while getopts "v:V:p:f: h D c m n M " o ; do
+    case $o in
+         v ) VOLUMES=$OPTARG;;
+	 V ) VOLFILE=$OPTARG;;
+	 p ) PROJFRACMIN=$OPTARG;;
+	 P ) PROJFRACMAX=$OPTARG;;
+	 f ) FWHM=$OPTARG;;
+	 D ) NATIVEDIR=1;;
+	 n ) INTERP="nearest";;
+	 c ) CORTEX="--cortex";;
+	 m ) REG="--regheader fsaverage ";;
+	 M ) NORMVAL="max";;
+	 h ) usage;
+	     exit 0;;
+    esac
+done
+
+if [ $# -eq 0 ]; then
+   usage; exit 0;
+fi
+
+if [ ${#VOLFILE} -ne 0 ]; then
+    if [ -r $VOLFILE ]; then
+	VOLUMES=$(cat $VOLFILE | xargs)
+    else
+	echo "Error: cannot read $VOLFILE"; exit 0;
+    fi
+fi
+
+if [ ${#VOLUMES} -ne 0 ]; then
+    for x in $VOLUMES; do
+	if [ ! -r $x ]; then
+    	    echo "Error: cannot read $x"; exit 0;
+	fi 
+    done
+else
+    echo "Error: no volumes found."; exit 0;
+fi
+
+for h in lh rh; do
+    for x in $VOLUMES; do
+    	if [ $NATIVEDIR -eq 1 ]; then
+	    loc=$(dirname $x)
+	else
+	    loc=$(pwd)
+	fi
+	echo "mri_vol2surf --mov ${x} $REG --hemi ${h} --interp $INTERP --trgsubject fsaverage --out $loc/${h}.$(basename ${x%%.nii.gz}).mgh --projfrac-$NORMVAL $PROJFRACMIN $PROJFRACMAX .1 --surf-fwhm $FWHM $CORTEX"
+        mri_vol2surf --mov ${x} $REG --hemi ${h} --interp $INTERP --trgsubject fsaverage --out $loc/${h}.$(basename ${x%%.nii.gz}).mgh --projfrac-$NORMVAL $PROJFRACMIN $PROJFRACMAX .1 --surf-fwhm $FWHM $CORTEX
+    done
+done
+
